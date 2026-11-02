@@ -1,0 +1,13 @@
+/dist/
+/.cache/
+/*.exe
+/oxgen
+/state.json*
+/server-url.txt
+/logs/
+/downloads/
+/tools/
+/.env
+/.env.*
+/*.zip
+/*.tar.gz
