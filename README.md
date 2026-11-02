@@ -1,4 +1,6 @@
-# OXGEN · 氧气邮政员
+# OXGEN · AI 工具箱
+
+作者：[氧气邮政员](https://github.com/oxgen100)
 
 跨平台的中文终端基础环境与 Agent 安装工具箱。使用工具箱无需预装 Python、Node.js 或 Go；首次下载使用 Windows PowerShell，或 macOS/Linux 自带的 curl/wget、tar 和 SHA256 工具。具体 Agent 的运行依赖在安装前单独检测。
 
