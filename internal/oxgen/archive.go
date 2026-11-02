@@ -74,6 +74,12 @@ func extractArchiveOptions(ctx context.Context, file, dest string, strip, allowZ
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		return err
 	}
+	// macOS /var and Windows short paths can alias the same directory. Use a
+	// canonical staging root so symlink containment checks compare real paths.
+	parent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return err
+	}
 	stage, err := os.MkdirTemp(parent, ".oxgen-stage-*")
 	if err != nil {
 		return err

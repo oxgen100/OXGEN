@@ -96,7 +96,7 @@ WSL 不自动安装、不自动重启、不搬迁已有发行版。首次启用�
 ```sh
 go test ./...
 go vet ./...
-go run ./cmd/pack -version 0.4.0 -github-repository oxgen100/OXGEN
+go run ./cmd/pack -version 0.4.1 -github-repository oxgen100/OXGEN
 ```
 
 发布包支持 Windows、macOS、Linux 的 x64/ARM64。GitHub 模式生成平铺的 Release 安装包清单，安装器锁定同一版本后下载，支持 GitHub 官方发行 CDN 的 HTTPS 重定向。
@@ -104,11 +104,11 @@ go run ./cmd/pack -version 0.4.0 -github-repository oxgen100/OXGEN
 推送 `v*` 标签后，GitHub Actions 在三种系统执行自动测试和 go vet，生成六个安装包与校验清单，先上传 Draft Release 的全部附件再发布，避免用户下载到未完成的版本。已发布版本不覆盖，改动后使用新的版本标签。
 
 ```sh
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.4.1
+git push origin v0.4.1
 ```
 
-自有 HTTPS 服务器模式仍可使用 `go run ./cmd/pack -version 0.4.0 -base-url https://你的域名/oxgen/`；上传 `dist/server` 中的安装脚本、manifest 和 releases 目录，不上传 build。发布包仅托管 OXGEN，Git、Node、Python 和 Agent 仍从软件官方来源下载。
+自有 HTTPS 服务器模式仍可使用 `go run ./cmd/pack -version 0.4.1 -base-url https://你的域名/oxgen/`；上传 `dist/server` 中的安装脚本、manifest 和 releases 目录，不上传 build。发布包仅托管 OXGEN，Git、Node、Python 和 Agent 仍从软件官方来源下载。
 
 ## 验证边界
 

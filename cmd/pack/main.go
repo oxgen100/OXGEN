@@ -33,7 +33,7 @@ func main() {
 }
 
 func run() error {
-	version := flag.String("version", "0.4.0", "release version")
+	version := flag.String("version", "0.4.1", "release version")
 	out := flag.String("out", "dist/server", "static server directory")
 	base := flag.String("base-url", "", "optional HTTPS download base; may be configured later")
 	github := flag.String("github-repository", "", "GitHub owner/repo; publish flat release assets")

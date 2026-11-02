@@ -74,6 +74,11 @@ func codeFixtureFiles(t *testing.T, root, osName string) {
 func TestVSCodeDetectionUsesNativeCLIAndKeepsExistingInstallation(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "编辑器 space")
 	codeFixtureFiles(t, root, "windows")
+	var err error
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var captures int
 	runner := &fakeRunner{paths: map[string]string{"code": filepath.Join(root, "bin", "code.cmd")}, capture: func(c Command) (string, error) {
 		captures++
