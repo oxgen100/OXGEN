@@ -2,7 +2,6 @@ package oxgen
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,7 +10,35 @@ import (
 	"time"
 )
 
-func (a *App) install(ctx context.Context, p InstallPlan, out io.Writer) (Record, error) {
+func (a *App) install(ctx context.Context, p InstallPlan, out io.Writer, save func(Record) error) (Record, error) {
+	if err := ctx.Err(); err != nil {
+		return Record{}, err
+	}
+	switch p.Tool {
+	case Node, VSCode, Codex, Claude, DeepSeek, Pi, OpenCode:
+		return a.installVersioned(ctx, p, out, save)
+	case Python:
+		if a.Host.OS == "windows" {
+			return a.installVersioned(ctx, p, out, save)
+		}
+	case WorkBuddy:
+		if a.Host.OS == "darwin" {
+			return a.installVersioned(ctx, p, out, save)
+		}
+	}
+	record, err := a.installPayload(ctx, p, out)
+	if err != nil {
+		return Record{}, err
+	}
+	if save != nil {
+		if err = save(record); err != nil {
+			return Record{}, fmt.Errorf("程序已安装，但保存安装记录失败: %w", err)
+		}
+	}
+	return record, nil
+}
+
+func (a *App) installPayload(ctx context.Context, p InstallPlan, out io.Writer) (Record, error) {
 	if isAgent(p.Tool) {
 		return a.installAgent(ctx, p, out)
 	}
@@ -23,9 +50,6 @@ func (a *App) install(ctx context.Context, p InstallPlan, out io.Writer) (Record
 	}
 	if a.Host.OS == "darwin" && p.Tool == Git {
 		return a.installAppleGit(ctx, p, out)
-	}
-	if p.Tool == Python && a.Host.OS == "windows" {
-		return a.installWindowsPython(ctx, p, out)
 	}
 	file, err := a.Client.Download(ctx, p.Release.Artifact, p.DownloadDir, out)
 	if err != nil {
@@ -39,10 +63,7 @@ func (a *App) install(ctx context.Context, p InstallPlan, out io.Writer) (Record
 	var exe, source string
 	switch p.Tool {
 	case Node:
-		if err = prepareVersionedTarget(p); err != nil {
-			return Record{}, err
-		}
-		fmt.Fprintln(out, "正在解压至：", p.InstallDir)
+		fmt.Fprintln(out, "正在暂存并验证 Node.js/npm。")
 		if err = extractArchiveContext(ctx, file, p.InstallDir, true); err != nil {
 			return Record{}, err
 		}
@@ -135,21 +156,18 @@ func (a *App) verifyPython(ctx context.Context, exe, work string, out io.Writer)
 	return a.Runner.Run(ctx, Command{Name: python, Args: []string{"-m", "pip", "--version"}}, out)
 }
 
-func (a *App) installWindowsPython(ctx context.Context, p InstallPlan, out io.Writer) (Record, error) {
-	if err := prepareVersionedTarget(p); err != nil {
-		return Record{}, err
-	}
+func (a *App) downloadWindowsPython(ctx context.Context, p InstallPlan, out io.Writer) (string, string, error) {
 	manager, err := a.Runner.LookPath("pymanager.exe")
 	if err != nil {
 		file, e := a.Client.Download(ctx, p.Release.Manager, p.DownloadDir, out)
 		if e != nil {
-			return Record{}, e
+			return "", "", e
 		}
 		if e = a.verifySignature(ctx, file, "Python Software Foundation", out); e != nil {
-			return Record{}, e
+			return "", "", e
 		}
 		if e = a.powershell(ctx, "install-python-manager", appxScript, []string{"-Package", file}, out); e != nil {
-			return Record{}, e
+			return "", "", e
 		}
 		manager, err = a.Runner.LookPath("pymanager.exe")
 		if err != nil {
@@ -160,26 +178,30 @@ func (a *App) installWindowsPython(ctx context.Context, p InstallPlan, out io.Wr
 			}
 		}
 		if err != nil {
-			return Record{}, &pendingError{"Python 安装管理器已安装，请开启其应用执行别名或重新打开终端后继续。"}
+			return "", "", &pendingError{"Python 安装管理器已安装，请开启其应用执行别名或重新打开终端后继续。"}
 		}
 	}
 	// The official manager downloads a COMPLETE runtime, verifies its official index,
 	// and extracts it to the selected destination. No embeddable Python is used.
 	cache := filepath.Join(p.DownloadDir, "python-"+p.Release.Version+"-"+a.Host.Arch)
 	if err = ensureWritable(cache); err != nil {
-		return Record{}, err
+		return "", "", err
 	}
 	if err = a.Runner.Run(ctx, Command{Name: manager, Args: []string{"install", "--source=https://www.python.org/ftp/python/index-windows.json", "--download=" + cache, p.Release.Tag}}, out); err != nil {
-		return Record{}, err
+		return "", "", err
 	}
-	if err = a.Runner.Run(ctx, Command{Name: manager, Args: []string{"install", "--source=" + filepath.Join(cache, "index.json"), "--target=" + p.InstallDir, p.Release.Tag}}, out); err != nil {
+	return manager, filepath.Join(cache, "index.json"), nil
+}
+
+func (a *App) installWindowsPython(ctx context.Context, p InstallPlan, manager, index string, out io.Writer) (Record, error) {
+	if err := a.Runner.Run(ctx, Command{Name: manager, Args: []string{"install", "--source=" + index, "--target=" + p.InstallDir, p.Release.Tag}}, out); err != nil {
 		return Record{}, err
 	}
 	exe := filepath.Join(p.InstallDir, "python.exe")
-	if err = a.prepareWindowsPython(ctx, exe, out); err != nil {
+	if err := a.prepareWindowsPython(ctx, exe, out); err != nil {
 		return Record{}, err
 	}
-	if err = a.verifyPython(ctx, exe, p.DownloadDir, out); err != nil {
+	if err := a.verifyPython(ctx, exe, p.DownloadDir, out); err != nil {
 		return Record{}, err
 	}
 	v, err := a.Runner.Capture(ctx, Command{Name: exe, Args: []string{"--version"}})
@@ -266,103 +288,6 @@ func (a *App) installAppleGit(ctx context.Context, p InstallPlan, out io.Writer)
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
-func shellProfiles(home, shell string, mac bool) []string {
-	switch filepath.Base(shell) {
-	case "zsh":
-		return []string{filepath.Join(home, ".zprofile"), filepath.Join(home, ".zshrc")}
-	case "bash":
-		login := ".profile"
-		if mac {
-			login = ".bash_profile"
-		}
-		return []string{filepath.Join(home, login), filepath.Join(home, ".bashrc")}
-	default:
-		return []string{filepath.Join(home, ".profile")}
-	}
-}
-
-func prepareVersionedTarget(p InstallPlan) error {
-	marker := filepath.Join(filepath.Dir(p.InstallDir), ".oxgen-target-"+filepath.Base(p.InstallDir)+".json")
-	owner := struct {
-		Path string `json:"path"`
-		Tool Tool   `json:"tool"`
-	}{p.InstallDir, p.Tool}
-	if _, err := os.Lstat(p.InstallDir); err == nil {
-		var previous struct {
-			Path string `json:"path"`
-			Tool Tool   `json:"tool"`
-		}
-		b, e := os.ReadFile(marker)
-		if e != nil || json.Unmarshal(b, &previous) != nil || !samePath(previous.Path, p.InstallDir) || previous.Tool != p.Tool {
-			return fmt.Errorf("所选版本目录已存在且不是可确认的 OXGEN 安装，未覆盖: %s", p.InstallDir)
-		}
-		if err = os.Rename(p.InstallDir, p.InstallDir+fmt.Sprintf(".previous-%d", time.Now().UnixNano())); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	return saveJSON(marker, owner)
-}
-
-func (a *App) addPath(ctx context.Context, record Record, out io.Writer) error {
-	i, err := a.UI.Choice("配置新安装程序的命令入口", []string{"加入当前用户 PATH", "仅本次使用", "保持现状"}, 0)
-	if err != nil {
-		return err
-	}
-	return a.setPath(ctx, record, out, i)
-}
-
-func (a *App) setPath(ctx context.Context, record Record, out io.Writer, i int) error {
-	if record.Source == workBuddySource {
-		return nil
-	}
-	var err error
-	dirs := []string{filepath.Dir(record.Path)}
-	if record.Source == vscodeSource {
-		root := vscodeRootFromPath(record.Path, a.Host.OS)
-		_, _, bin := vscodeLayout(root, a.Host.OS)
-		dirs = []string{bin}
-	}
-	if a.Host.OS == "windows" && strings.Contains(record.Source, "Python") {
-		dirs = append(dirs, filepath.Join(filepath.Dir(record.Path), "Scripts"))
-	}
-	if strings.HasPrefix(record.Path, "/usr/bin/") {
-		return nil
-	}
-	if i == 2 {
-		return nil
-	}
-	if i == 0 {
-		if a.Host.OS == "windows" {
-			b, _ := json.Marshal(dirs)
-			if err = a.powershell(ctx, "add-user-path", pathScript, []string{"-PathsJSON", string(b)}, out); err != nil {
-				return err
-			}
-		} else {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return err
-			}
-			line := "export PATH=" + shellQuote(strings.Join(dirs, string(os.PathListSeparator))) + ":\"$PATH\""
-			for _, file := range shellProfiles(home, os.Getenv("SHELL"), a.Host.OS == "darwin") {
-				if b, e := os.ReadFile(file); e == nil && strings.Contains(string(b), line) {
-				} else {
-					f, e := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-					if e != nil {
-						return e
-					}
-					_, err = f.WriteString("\n# OXGEN managed command path\n" + line + "\n")
-					f.Close()
-					if err != nil {
-						return err
-					}
-				}
-			}
-			fmt.Fprintln(out, "已添加用户 shell 配置。请打开新登录终端，或读取相应配置文件。")
-		}
-	}
-	_ = os.Setenv("PATH", strings.Join(dirs, string(os.PathListSeparator))+string(os.PathListSeparator)+os.Getenv("PATH"))
-	fmt.Fprintln(out, "请在新的终端执行 oxgen doctor，核对命令实际生效位置；已有系统级命令可能仍优先。")
-	return nil
+func launcherRelativePath(relative string) string {
+	return `"$(dirname "$0")/"` + shellQuote(filepath.ToSlash(relative))
 }

@@ -174,7 +174,7 @@ func TestVSCodeInstallVerifiesCommitArchitectureAndFailures(t *testing.T) {
 			a.Client = fixtureClient(map[string][]byte{"/VSCode.zip": body})
 			p := InstallPlan{Tool: VSCode, Root: filepath.Join(a.Home, "VS Code 中文 space"), DownloadDir: filepath.Join(a.Home, "downloads"), Release: Release{Version: testCodeVersion, Tag: testCodeCommit, Artifact: Artifact{URL: "https://vscode.download.prss.microsoft.com/VSCode.zip", SHA256: hash}}}
 			p.InstallDir = filepath.Join(p.Root, "versions", testCodeVersion)
-			record, err := a.install(context.Background(), p, io.Discard)
+			record, err := a.install(context.Background(), p, io.Discard, nil)
 			if scenario == "success" {
 				if err != nil || record.Version != testCodeVersion || record.Source != vscodeSource {
 					t.Fatal(record, err)
@@ -265,7 +265,7 @@ func TestLiveOfficialVSCode(t *testing.T) {
 	t.Logf("official VS Code stable %s, %s", r.Version, r.Artifact.URL)
 	p := InstallPlan{Tool: VSCode, Root: filepath.Join(base, "程序 space"), DownloadDir: filepath.Join(base, "下载 space"), Release: r}
 	p.InstallDir = filepath.Join(p.Root, "versions", r.Version)
-	record, err := a.installVSCode(ctx, p, os.Stdout)
+	record, err := a.install(ctx, p, os.Stdout, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

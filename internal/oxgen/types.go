@@ -146,6 +146,7 @@ type InstallPlan struct {
 	Extra       []string
 	Update      bool
 	Automatic   bool
+	Repair      *commandEntry
 }
 
 type Command struct {

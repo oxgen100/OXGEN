@@ -101,31 +101,18 @@ func TestGitWindowsRevisionAndInterruptedState(t *testing.T) {
 	}
 }
 
-func TestVersionedRetryPreservesUnownedFiles(t *testing.T) {
+func TestVersionedInstallPreservesUnownedFiles(t *testing.T) {
 	root := t.TempDir()
 	p := InstallPlan{Tool: Node, InstallDir: filepath.Join(root, "versions", "26.0.0")}
 	if err := os.MkdirAll(p.InstallDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(p.InstallDir, "user.txt"), []byte("keep"), 0600)
-	if err := prepareVersionedTarget(p); err == nil {
+	if _, err := newVersionedTarget(p); err == nil {
 		t.Fatal("claimed unowned directory")
 	}
 	if b, _ := os.ReadFile(filepath.Join(p.InstallDir, "user.txt")); string(b) != "keep" {
 		t.Fatal("lost user file")
-	}
-	p.InstallDir = filepath.Join(root, "owned", "26.0.0")
-	if err := prepareVersionedTarget(p); err != nil {
-		t.Fatal(err)
-	}
-	os.MkdirAll(p.InstallDir, 0755)
-	os.WriteFile(filepath.Join(p.InstallDir, "partial.txt"), []byte("partial"), 0600)
-	if err := prepareVersionedTarget(p); err != nil {
-		t.Fatal("could not retry owned attempt", err)
-	}
-	kept, _ := filepath.Glob(p.InstallDir + ".previous-*")
-	if len(kept) != 1 {
-		t.Fatal("did not preserve previous attempt")
 	}
 }
 
@@ -384,7 +371,7 @@ func TestLiveLinuxCachedNode(t *testing.T) {
 	}
 	plan := InstallPlan{Tool: Node, Release: release, Root: filepath.Join(root, "node"), InstallDir: filepath.Join(root, "node", "versions", release.Version), DownloadDir: cache}
 	start := time.Now()
-	record, err := a.install(ctx, plan, os.Stdout)
+	record, err := a.install(ctx, plan, os.Stdout, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -650,7 +637,7 @@ func TestEntrypointsAndInstallerScriptsParse(t *testing.T) {
 		t.Skip("PowerShell not available")
 	}
 	dir := t.TempDir()
-	sources := map[string]string{"signature": signatureScript, "appx": appxScript, "path": pathScript, "elevate": elevateScript, "workbuddy": workBuddyNSIS}
+	sources := map[string]string{"signature": signatureScript, "appx": appxScript, "path": pathScript, "effective-path": effectiveWindowsPathScript, "elevate": elevateScript, "workbuddy": workBuddyNSIS}
 	bootstrap, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install.ps1"))
 	if err != nil {
 		t.Fatal(err)

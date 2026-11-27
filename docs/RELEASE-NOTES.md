@@ -1,4 +1,11 @@
-OXGEN「氧气邮政员」提供中文终端菜单，可检测、安装和更新基础环境及 Agent。
+OXGEN · AI 工具箱 v0.4.2 改进安装恢复和一条龙流程。
+
+- 使用版本目录的组件在同版本修复时保留原程序，验证或保存安装记录失败会恢复原目录。
+- Ubuntu／Debian 本地 APT 索引为空时，仍可一条龙安装缺失的 Git 和 Python。
+- 一条龙可给已有程序补命令入口，遇到 Windows 系统路径优先级冲突会显示实际入口。
+- WorkBuddy 缓存验签失败会重新下载一次，验签通过后才使用新包。
+
+OXGEN 提供中文终端菜单，可检测、安装和更新基础环境及 Agent。
 
 - 基础环境：Git、Node.js/npm、完整 Python/pip/venv、VS Code；Windows 可选 WSL＋Ubuntu。
 - Agent：Codex CLI、Claude Code、WorkBuddy、DeepSeek Harness、pi、OpenCode。

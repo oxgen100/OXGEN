@@ -306,6 +306,12 @@ func (a *App) showRelease(r Release) {
 
 func (a *App) executePlan(ctx context.Context, p InstallPlan) Result {
 	tool := p.Tool
+	if err := ctx.Err(); err != nil {
+		return a.result(tool, "跳过", "用户取消后续安装", "")
+	}
+	if p.Repair != nil {
+		return a.repairCommandPath(ctx, p)
+	}
 	var err error
 	if err = ensureWritable(p.DownloadDir); err != nil {
 		return a.result(tool, "失败", "下载目录不可写: "+err.Error(), "")
@@ -324,7 +330,19 @@ func (a *App) executePlan(ctx context.Context, p InstallPlan) Result {
 	}
 	defer log.Close()
 	writer := io.MultiWriter(a.UI.Out, log)
-	record, err := a.install(ctx, p, writer)
+	record, err := a.install(ctx, p, writer, func(record Record) error {
+		before, known := a.State.Records[tool]
+		a.State.Records[tool] = record
+		if err := saveState(a.Home, a.State); err != nil {
+			if known {
+				a.State.Records[tool] = before
+			} else {
+				delete(a.State.Records, tool)
+			}
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		if errors.Is(err, errCancelled) || errors.Is(err, context.Canceled) {
 			return a.result(tool, "跳过", "用户取消后续安装", logPath)
@@ -335,15 +353,13 @@ func (a *App) executePlan(ctx context.Context, p InstallPlan) Result {
 		}
 		return a.result(tool, "失败", err.Error(), logPath)
 	}
-	if ctx.Err() != nil {
-		return a.result(tool, "跳过", "用户取消后续安装", logPath)
+	if ctx.Err() != nil && record.Source != workBuddySource && !strings.HasPrefix(record.Path, "/usr/bin/") {
+		return a.result(tool, "待用户操作", "程序已安装，命令入口尚未配置: "+record.Path, logPath)
 	}
-	a.State.Records[tool] = record
-	if err = saveState(a.Home, a.State); err != nil {
-		return a.result(tool, "失败", "已安装，但保存安装记录失败: "+err.Error(), logPath)
-	}
-	if err = a.setPath(ctx, record, writer, 0); err != nil {
-		return a.result(tool, "待用户操作", "程序已安装，但命令入口需要手动配置: "+err.Error(), logPath)
+	if record.Source != workBuddySource && !strings.HasPrefix(record.Path, "/usr/bin/") {
+		if err = a.setUserPath(ctx, a.commandDirs(tool, record.Path), writer); err != nil {
+			return a.result(tool, "待用户操作", "程序已安装，但命令入口需要手动配置: "+err.Error(), logPath)
+		}
 	}
 	return a.result(tool, "成功", record.Version+" · "+record.Path, logPath)
 }

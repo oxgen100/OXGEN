@@ -315,9 +315,6 @@ func (a *App) installAgent(ctx context.Context, p InstallPlan, out io.Writer) (R
 			return Record{}, err
 		}
 	}
-	if err = prepareVersionedTarget(p); err != nil {
-		return Record{}, err
-	}
 	var exe string
 	if p.Tool == Claude {
 		if err = os.MkdirAll(p.InstallDir, 0755); err != nil {
@@ -379,7 +376,11 @@ func (a *App) installAgent(ctx context.Context, p InstallPlan, out io.Writer) (R
 			return Record{}, err
 		}
 		commandPath = filepath.Join(bin, "claude")
-		body := "#!/bin/sh\nDISABLE_UPDATES=1 DISABLE_AUTOUPDATER=1 exec " + shellQuote(exe) + " \"$@\"\n"
+		relative, err := filepath.Rel(bin, exe)
+		if err != nil {
+			return Record{}, err
+		}
+		body := "#!/bin/sh\nDISABLE_UPDATES=1 DISABLE_AUTOUPDATER=1 exec " + launcherRelativePath(relative) + " \"$@\"\n"
 		if a.Host.OS == "windows" {
 			commandPath += ".cmd"
 			body = "@echo off\r\nsetlocal DisableDelayedExpansion\r\nset \"DISABLE_UPDATES=1\"\r\nset \"DISABLE_AUTOUPDATER=1\"\r\n\"%~dp0..\\claude.exe\" %*\r\nexit /b %errorlevel%\r\n"

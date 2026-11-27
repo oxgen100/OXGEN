@@ -30,15 +30,17 @@ Add-AppxPackage -Path $Package -ErrorAction Stop
 Write-Output 'Python 官方安装管理器安装完成。'
 `
 
+const mergeUserPath = `
+[string[]]$newPaths = ConvertFrom-Json -InputObject $PathsJSON
+$entries = $newPaths + @($oldPath -split ';' | Where-Object { $_ -and $newPaths -notcontains $_ })
+$newPath = $entries -join ';'
+`
+
 const pathScript = `param([Parameter(Mandatory=$true)][string]$PathsJSON)
 $ErrorActionPreference = 'Stop'
-$newPaths = @(ConvertFrom-Json -InputObject $PathsJSON)
 $oldPath = [Environment]::GetEnvironmentVariable('Path','User')
-$entries = @($oldPath -split ';' | Where-Object { $_ })
-foreach ($entry in $newPaths) {
-  if ($entries -notcontains $entry) { $entries = @($entry) + $entries }
-}
-[Environment]::SetEnvironmentVariable('Path',($entries -join ';'),'User')
+` + mergeUserPath + `
+[Environment]::SetEnvironmentVariable('Path',$newPath,'User')
 Write-Output '已添加当前用户 PATH；新终端生效。系统级 PATH 未更改。'
 `
 

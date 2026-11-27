@@ -110,8 +110,9 @@ func (a *App) installAPT(ctx context.Context, p InstallPlan, out io.Writer) (Rec
 	}
 	opts := []string{"-o", "Dir::Etc::sourcelist=" + sourceFile, "-o", "Dir::Etc::sourceparts=-", "-o", "Dir::State::lists=" + filepath.Join(cache, "lists"), "-o", "Dir::Cache::archives=" + filepath.Join(cache, "archives"), "-o", "APT::Get::List-Cleanup=0"}
 	fmt.Fprintln(out, "仅刷新本次安装使用的发行版官方索引，不更改系统已有软件源。")
-	if err = a.rootRun(ctx, Command{Name: "apt-get", Args: append(append([]string{}, opts...), "update"), Timeout: 10 * time.Minute}, out); err != nil {
-		return Record{}, err
+	update := append(append([]string{}, opts...), "-o", "APT::Update::Error-Mode=any", "update")
+	if err = a.rootRun(ctx, Command{Name: "apt-get", Args: update, Timeout: 10 * time.Minute}, out); err != nil {
+		return Record{}, fmt.Errorf("刷新发行版官方索引失败: %w", err)
 	}
 	policy, err := a.Runner.Capture(ctx, Command{Name: "apt-cache", Args: append(append([]string{}, opts...), "policy", aptPackage(p.Tool))})
 	if err != nil {

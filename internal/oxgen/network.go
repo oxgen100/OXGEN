@@ -150,6 +150,11 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 }
 
 func (c *Client) Download(ctx context.Context, a Artifact, dir string, out io.Writer) (string, error) {
+	return c.download(ctx, a, dir, out, nil)
+}
+
+// A verifier can check a signed installer before reuse or promotion to cache.
+func (c *Client) download(ctx context.Context, a Artifact, dir string, out io.Writer, verify func(string) error) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -191,13 +196,27 @@ func (c *Client) Download(ctx context.Context, a Artifact, dir string, out io.Wr
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if verified {
-		fmt.Fprintln(out, "复用已通过官方 SHA256/SHA512 校验的发行包。")
-		return dest, nil
-	}
+	signatureCache := false
 	if a.SHA256 == "" && a.SHA512 == "" && a.Signature != "" && strings.HasSuffix(name, ".exe") {
-		if info, e := os.Stat(dest); e == nil && info.Mode().IsRegular() {
-			fmt.Fprintln(out, "复用已下载的安装器；执行前仍须重新验证发布者签名。")
+		info, err := os.Lstat(dest)
+		signatureCache = err == nil && info.Mode().IsRegular()
+	}
+	if verified || signatureCache {
+		if verify != nil {
+			if err = verify(dest); err == nil {
+				fmt.Fprintln(out, "复用已通过发布者签名校验的安装器。")
+				return dest, nil
+			}
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			fmt.Fprintln(out, "缓存安装器验签失败，从官方来源重新下载一次：", err)
+		} else {
+			if verified {
+				fmt.Fprintln(out, "复用已通过官方 SHA256/SHA512 校验的发行包。")
+			} else {
+				fmt.Fprintln(out, "复用已下载的安装器；执行前仍须重新验证发布者签名。")
+			}
 			return dest, nil
 		}
 	}
@@ -210,7 +229,7 @@ func (c *Client) Download(ctx context.Context, a Artifact, dir string, out io.Wr
 	if err = checkSpace(dir, need); err != nil {
 		return "", err
 	}
-	f, err := os.CreateTemp(dir, ".oxgen-download-*")
+	f, err := os.CreateTemp(dir, ".oxgen-download-*"+filepath.Ext(name))
 	if err != nil {
 		return "", err
 	}
@@ -243,14 +262,41 @@ func (c *Client) Download(ctx context.Context, a Artifact, dir string, out io.Wr
 	if a.SHA512 != "" && !strings.EqualFold(hex.EncodeToString(h512.Sum(nil)), a.SHA512) {
 		return "", fmt.Errorf("SHA512 校验失败，安装未执行")
 	}
-	if _, err = os.Stat(dest); err == nil {
-		if err = os.Rename(dest, dest+fmt.Sprintf(".previous-%d", time.Now().UnixNano())); err != nil {
-			return "", err
+	if verify != nil {
+		if err = verify(tmp); err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			return "", fmt.Errorf("新下载的安装器验签失败，未执行安装: %w", err)
 		}
 	}
-	if err = os.Rename(tmp, dest); err != nil {
+	if err = ctx.Err(); err != nil {
 		return "", err
 	}
-	fmt.Fprintln(out, "下载完成；后续执行前将检查所需签名。")
+	backup := ""
+	if info, statErr := os.Lstat(dest); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("下载目标不是普通文件，未替换: %s", dest)
+		}
+		backup = dest + fmt.Sprintf(".previous-%d", time.Now().UnixNano())
+		if err = os.Rename(dest, backup); err != nil {
+			return "", err
+		}
+	} else if !os.IsNotExist(statErr) {
+		return "", statErr
+	}
+	if err = os.Rename(tmp, dest); err != nil {
+		if backup != "" {
+			if restoreErr := os.Rename(backup, dest); restoreErr != nil {
+				return "", fmt.Errorf("保存下载失败: %v；原文件保存在 %s: %w", err, backup, restoreErr)
+			}
+		}
+		return "", err
+	}
+	if verify != nil {
+		fmt.Fprintln(out, "官方安装器下载及签名校验完成。")
+	} else {
+		fmt.Fprintln(out, "下载完成；后续执行前将检查所需签名。")
+	}
 	return dest, nil
 }

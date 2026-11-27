@@ -232,10 +232,7 @@ func (a *App) installVSCode(ctx context.Context, p InstallPlan, out io.Writer) (
 	if err != nil {
 		return Record{}, err
 	}
-	if err = prepareVersionedTarget(p); err != nil {
-		return Record{}, err
-	}
-	fmt.Fprintln(out, "正在解压完整 VS Code 至：", p.InstallDir)
+	fmt.Fprintln(out, "正在暂存并验证完整 VS Code。")
 	if err = extractArchiveOptions(ctx, file, p.InstallDir, a.Host.OS == "linux", a.Host.OS == "darwin"); err != nil {
 		return Record{}, err
 	}
@@ -246,7 +243,7 @@ func (a *App) installVSCode(ctx context.Context, p InstallPlan, out io.Writer) (
 			return Record{}, fmt.Errorf("VS Code 应用签名验证失败: %w", err)
 		}
 		if err = a.Runner.Run(ctx, Command{Name: "/usr/sbin/spctl", Args: []string{"--assess", "--type", "execute", root}}, out); err != nil {
-			return Record{}, &pendingError{"VS Code 已解压，但需通过 macOS 系统安全检查；请按系统提示处理后重新检测。"}
+			return Record{}, &pendingError{"本次 VS Code 未通过 macOS 系统安全检查；请查看系统提示后重试。"}
 		}
 	}
 	exe, cli, bin := vscodeLayout(root, a.Host.OS)

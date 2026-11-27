@@ -36,6 +36,9 @@ func (r OSRunner) Capture(ctx context.Context, c Command) (string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	if err != nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	text := decodeOutput(out.Bytes())
 	if err != nil && stderr.Len() > 0 {
 		text += "\n" + decodeOutput(stderr.Bytes())
@@ -57,6 +60,9 @@ func (r OSRunner) Run(ctx context.Context, c Command, out io.Writer) error {
 	cmd.Stdout = out
 	cmd.Stderr = out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("%s: %w", c.Name, err)
 	}
 	return nil

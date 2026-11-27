@@ -108,9 +108,6 @@ func (a *App) installNpmAgent(ctx context.Context, p InstallPlan, out io.Writer)
 	if p.Release.Package != agentPackage(p.Tool) || !agentVersion.MatchString(p.Release.Version) {
 		return Record{}, fmt.Errorf("不支持的 Agent 软件包")
 	}
-	if err = prepareVersionedTarget(p); err != nil {
-		return Record{}, err
-	}
 	if err = os.MkdirAll(p.InstallDir, 0755); err != nil {
 		return Record{}, err
 	}
@@ -179,15 +176,15 @@ func (a *App) installNpmAgent(ctx context.Context, p InstallPlan, out io.Writer)
 		return Record{}, err
 	}
 	launcher := filepath.Join(bin, agentCommand(p.Tool))
-	body := "#!/bin/sh\nexec " + shellQuote(node) + " " + shellQuote(entry) + " \"$@\"\n"
+	rel, err := filepath.Rel(bin, entry)
+	if err != nil {
+		return Record{}, err
+	}
+	body := "#!/bin/sh\nexec " + shellQuote(node) + " " + launcherRelativePath(rel) + " \"$@\"\n"
 	if a.Host.OS == "windows" {
 		launcher += ".cmd"
 		// Paths from the pasted root remain relative to this batch file, so cmd
 		// does not reinterpret percent signs or shell metacharacters in that root.
-		rel, e := filepath.Rel(bin, entry)
-		if e != nil {
-			return Record{}, e
-		}
 		bash := ""
 		if p.Tool == Pi {
 			bash = a.gitBash(ctx)

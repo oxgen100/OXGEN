@@ -67,7 +67,15 @@ func (a *App) pickLocations(p *InstallPlan) error {
 }
 
 func (a *App) showPlan(p InstallPlan) {
-	a.UI.Print("\n%s %s\n  下载：%s\n  安装：%s\n", a.UI.Accent(p.Tool.String()), p.Release.Version, p.DownloadDir, p.InstallDir)
+	if p.Repair != nil {
+		a.UI.Print("\n%s %s\n  修复命令入口：%s\n  写入当前用户 PATH。\n", a.UI.Accent(p.Tool.String()), p.Current.Version, p.Repair.Path)
+		return
+	}
+	version := p.Release.Version
+	if version == "" {
+		version = p.Release.Channel
+	}
+	a.UI.Print("\n%s %s\n  下载：%s\n  安装：%s\n", a.UI.Accent(p.Tool.String()), version, p.DownloadDir, p.InstallDir)
 	for _, extra := range p.Extra {
 		a.UI.Line("  " + extra)
 	}
@@ -174,10 +182,11 @@ func (a *App) oneStop(ctx context.Context) {
 }
 
 func (a *App) installMissing(ctx context.Context) {
-	a.UI.Section("一条龙安装 · 先检测，只补缺失环境")
+	a.UI.Section("一条龙安装 · 补齐环境和命令入口")
 	a.UI.Line("0. 返回上一级")
 	var results []Result
 	var needs []Detection
+	var plans []InstallPlan
 	for _, tool := range coreTools {
 		if ctx.Err() != nil {
 			return
@@ -190,20 +199,28 @@ func (a *App) installMissing(ctx context.Context) {
 		if tool == VSCode && a.Host.OS == "linux" && runningInWSL() {
 			results = append(results, Result{Tool: tool, Status: "待用户操作", Message: "在 Windows 主机安装 VS Code，再连接 WSL。"})
 			a.UI.Line("  在 Windows 主机管理 VS Code")
-		} else if d.Installed && d.Healthy {
+		} else if d.Installed && d.Healthy && d.Active {
 			results = append(results, Result{Tool: tool, Status: "保留", Message: d.Version + " · " + d.Path})
 			a.UI.Print("  已有 %s · 保留\n", d.Version)
+		} else if d.Installed && d.Healthy {
+			if entry, ok := a.detectedCommandEntry(d); ok {
+				plans = append(plans, InstallPlan{Tool: tool, Current: d, Repair: &entry})
+				a.UI.Print("  已有 %s · 准备修复命令入口\n", d.Version)
+			} else {
+				results = append(results, Result{Tool: tool, Status: "待用户操作", Message: "已找到程序，但无法确认可加入 PATH 的命令入口：" + d.Path})
+				a.UI.Line("  已找到程序 · 命令入口待确认")
+			}
 		} else {
 			needs = append(needs, d)
 			a.UI.Line("  缺失或不完整 · 准备安装")
 		}
 	}
-	if len(needs) == 0 {
+	if len(needs) == 0 && len(plans) == 0 {
 		a.UI.Line("检测完成，没有需要补装的环境。")
 		a.summary(results)
 		return
 	}
-	var plans []InstallPlan
+	hasInstall := false
 	for _, d := range needs {
 		if ctx.Err() != nil {
 			return
@@ -212,7 +229,10 @@ func (a *App) installMissing(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if err != nil {
+		if err != nil && a.Host.OS == "linux" && systemPackage(d.Tool) {
+			r = Release{Channel: "安装时从发行版官方仓库选版本"}
+			a.UI.Line(d.Tool.String() + "：安装时刷新官方索引并确定版本。")
+		} else if err != nil {
 			a.UI.Warn(d.Tool.String() + "：暂时无法查询官方版本，先跳过，完成后可单项重试。")
 			results = append(results, Result{Tool: d.Tool, Status: "失败", Message: "官方版本查询失败，未安装：" + err.Error()})
 			continue
@@ -223,22 +243,29 @@ func (a *App) installMissing(ctx context.Context) {
 			continue
 		}
 		plans = append(plans, p)
+		hasInstall = true
 	}
 	if len(plans) == 0 {
 		a.summary(results)
 		return
 	}
-	root, err := a.chooseDir("粘贴总安装目录", filepath.Join(a.Home, "tools"))
-	if err != nil {
-		return
+	root := ""
+	if hasInstall {
+		var err error
+		root, err = a.chooseDir("粘贴总安装目录", filepath.Join(a.Home, "tools"))
+		if err != nil {
+			return
+		}
 	}
 	a.UI.Section("本次安装清单")
 	for i := range plans {
 		p := &plans[i]
-		locatePlan(p, filepath.Join(root, string(p.Tool)), filepath.Join(root, "downloads", string(p.Tool)))
+		if p.Repair == nil {
+			locatePlan(p, filepath.Join(root, string(p.Tool)), filepath.Join(root, "downloads", string(p.Tool)))
+		}
 		a.showPlan(*p)
 	}
-	a.UI.Line("只补上面列出的组件；保留已有可用版本。安装后统一配置当前用户 PATH。")
+	a.UI.Line("按清单补装组件并配置当前用户 PATH。")
 	if !a.UI.Confirm("开始一条龙安装？") {
 		return
 	}

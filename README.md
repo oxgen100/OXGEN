@@ -47,9 +47,9 @@ oxgen --no-color
 
 `doctor` 仅进行只读检测；不创建状态、日志或虚拟环境。`--online` 另查询官方推荐版本，查询失败单独显示。实际安装后才创建临时虚拟环境验证 pip，并在限定临时目录内清理。
 
-推荐使用主菜单 `3. 一条龙安装`，或 `1. Agent 基础环境` → `1. 一条龙安装`：先检测 Git、Node/npm、Python/pip/venv、VS Code；已有可用环境直接保留，只补缺失或不完整的项目。然后粘贴一次总目录，核对一次安装清单，输入 `1` 连续安装并为新组件配置当前用户 PATH。没有缺失时直接给出检测汇总，不询问目录、不联网查新版本。WSL 仍为独立可选项。
+推荐使用主菜单 `3. 一条龙安装`，或 `1. Agent 基础环境` → `1. 一条龙安装`。工具会检测 Git、Node/npm、Python/pip/venv、VS Code，列出要补装的组件和要修复的命令入口。需要安装时粘贴一次总目录，核对清单后输入 `1` 执行；只有命令入口待修时直接确认清单。已有可用环境保留，WSL 仍为独立可选项。
 
-例如粘贴 `D:\AI环境`，安装包在 `D:\AI环境\downloads\<组件>`，程序分别放入 `git`、`node`、`python`、`vscode` 子目录；使用版本目录的组件继续按 `versions/<版本>` 存放。系统组件固定位置、Python 安装管理器、用户配置和 PATH 等额外写入位置在清单中明示。APT 使用刷新后的官方仓库实际候选版本；Apple 首次开发工具安装需在系统窗口完成，工具箱记为待操作，其余项目继续。
+例如粘贴 `D:\AI环境`，安装包在 `D:\AI环境\downloads\<组件>`，程序分别放入 `git`、`node`、`python`、`vscode` 子目录；使用版本目录的组件继续按 `versions/<版本>` 存放。系统组件固定位置、Python 安装管理器、用户配置和 PATH 等额外写入位置在清单中明示。APT 在确认后刷新官方索引并确定候选版本，本地索引为空也会列入清单。Apple 首次开发工具安装需在系统窗口完成，工具箱记为待操作，其余项目继续。
 
 单项安装也只粘贴一次目录：下载包默认放在该目录的 `downloads` 中；固定系统位置的项目，粘贴目录只用于下载，实际安装位置会明确显示。更新可从单项菜单选择，已有可用版本在一条龙中不自动更新。
 
@@ -98,7 +98,7 @@ WSL 不自动安装、不自动重启、不搬迁已有发行版。首次启用�
 ```sh
 go test ./...
 go vet ./...
-go run ./cmd/pack -version 0.4.1 -github-repository oxgen100/OXGEN
+go run ./cmd/pack -version 0.4.2 -github-repository oxgen100/OXGEN
 ```
 
 发布包支持 Windows、macOS、Linux 的 x64/ARM64。GitHub 模式生成平铺的 Release 安装包清单，安装器锁定同一版本后下载，支持 GitHub 官方发行 CDN 的 HTTPS 重定向。
@@ -106,11 +106,11 @@ go run ./cmd/pack -version 0.4.1 -github-repository oxgen100/OXGEN
 推送 `v*` 标签后，GitHub Actions 在三种系统执行自动测试和 go vet，生成六个安装包与校验清单，先上传 Draft Release 的全部附件再发布，避免用户下载到未完成的版本。已发布版本不覆盖，改动后使用新的版本标签。
 
 ```sh
-git tag v0.4.1
-git push origin v0.4.1
+git tag v0.4.2
+git push origin v0.4.2
 ```
 
-自有 HTTPS 服务器模式仍可使用 `go run ./cmd/pack -version 0.4.1 -base-url https://你的域名/oxgen/`；上传 `dist/server` 中的安装脚本、manifest 和 releases 目录，不上传 build。发布包仅托管 OXGEN，Git、Node、Python 和 Agent 仍从软件官方来源下载。
+自有 HTTPS 服务器模式仍可使用 `go run ./cmd/pack -version 0.4.2 -base-url https://你的域名/oxgen/`；上传 `dist/server` 中的安装脚本、manifest 和 releases 目录，不上传 build。发布包仅托管 OXGEN，Git、Node、Python 和 Agent 仍从软件官方来源下载。
 
 ## 验证边界
 

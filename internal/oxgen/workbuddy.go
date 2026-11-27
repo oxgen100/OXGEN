@@ -117,15 +117,16 @@ func (a *App) installWorkBuddy(ctx context.Context, p InstallPlan, out io.Writer
 			return Record{}, &pendingError{"请先关闭正在运行的 WorkBuddy，再重新安装；未下载或改动现有应用。"}
 		}
 	}
-	file, err := a.Client.Download(ctx, p.Release.Artifact, p.DownloadDir, out)
+	var verify func(string) error
+	if a.Host.OS == "windows" {
+		verify = func(file string) error { return a.verifySignature(ctx, file, "Tencent WorkBuddy", out) }
+	}
+	file, err := a.Client.download(ctx, p.Release.Artifact, p.DownloadDir, out, verify)
 	if err != nil {
 		return Record{}, err
 	}
 	var exe string
 	if a.Host.OS == "windows" {
-		if err = a.verifySignature(ctx, file, "Tencent WorkBuddy", out); err != nil {
-			return Record{}, err
-		}
 		if p.Current.Installed && !samePath(filepath.Dir(p.Current.Path), p.InstallDir) {
 			return Record{}, fmt.Errorf("WorkBuddy 更新须沿用原目录，不自动跨盘迁移")
 		}
@@ -141,9 +142,6 @@ func (a *App) installWorkBuddy(ctx context.Context, p InstallPlan, out io.Writer
 		}
 		exe = filepath.Join(p.InstallDir, "WorkBuddy.exe")
 	} else {
-		if err = prepareVersionedTarget(p); err != nil {
-			return Record{}, err
-		}
 		mount, e := os.MkdirTemp(p.DownloadDir, ".oxgen-workbuddy-mount-*")
 		if e != nil {
 			return Record{}, e

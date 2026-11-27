@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -232,20 +233,20 @@ func TestNpmAgentPrivateInstallAndUntrustedLock(t *testing.T) {
 					if broken {
 						source = "https://mirror.example/agent.tgz"
 					}
-					return saveJSON(filepath.Join(p.InstallDir, "package-lock.json"), map[string]any{"lockfileVersion": 3, "packages": map[string]any{"": map[string]any{}, "node_modules/" + r.Package: map[string]any{"version": version, "resolved": source, "integrity": r.Integrity}}})
+					return saveJSON(filepath.Join(c.Dir, "package-lock.json"), map[string]any{"lockfileVersion": 3, "packages": map[string]any{"": map[string]any{}, "node_modules/" + r.Package: map[string]any{"version": version, "resolved": source, "integrity": r.Integrity}}})
 				}
 				if c.Args[1] != "ci" {
 					t.Fatal("unexpected npm action", c)
 				}
 				ci = true
-				pkg := filepath.Join(p.InstallDir, "node_modules", filepath.FromSlash(r.Package))
+				pkg := filepath.Join(c.Dir, "node_modules", filepath.FromSlash(r.Package))
 				os.MkdirAll(filepath.Join(pkg, "dist"), 0755)
 				os.WriteFile(filepath.Join(pkg, "dist", "cli.js"), []byte("fixture"), 0600)
 				return saveJSON(filepath.Join(pkg, "package.json"), map[string]any{"bin": map[string]string{agentCommand(tool): "dist/cli.js"}})
 			}}
 			a := testApp(t, "", runner)
 			a.Host = Host{OS: "windows", Arch: "amd64"}
-			record, err := a.installNpmAgent(context.Background(), p, io.Discard)
+			record, err := a.install(context.Background(), p, io.Discard, nil)
 			if broken {
 				if err == nil || ci {
 					t.Fatal("installed packages before validating their origin", err)
@@ -255,6 +256,9 @@ func TestNpmAgentPrivateInstallAndUntrustedLock(t *testing.T) {
 			if err != nil || !ci || record.Runtime != node || record.Version != version {
 				t.Fatal(record, err)
 			}
+			if !contained(p.InstallDir, record.Entry) || !contained(p.InstallDir, record.Path) {
+				t.Fatal("record still points to the staging directory", record)
+			}
 			launcher, e := os.ReadFile(record.Path)
 			if e != nil || !strings.Contains(string(launcher), "%~dp0..") {
 				t.Fatal("no path-safe launcher", e)
@@ -262,7 +266,7 @@ func TestNpmAgentPrivateInstallAndUntrustedLock(t *testing.T) {
 			if tool == Pi && !strings.Contains(string(launcher), filepath.Dir(bash)) {
 				t.Fatal("custom Git Bash not propagated")
 			}
-			if _, err = a.installNpmAgent(context.Background(), p, io.Discard); err != nil || resolves != 1 {
+			if _, err = a.install(context.Background(), p, io.Discard, nil); err != nil || resolves != 1 {
 				t.Fatal("retry resolved the same dependency graph again", resolves, err)
 			}
 		}
@@ -282,44 +286,88 @@ func TestCodexPrefersOfficialReleaseChannel(t *testing.T) {
 }
 
 func TestWorkBuddyInstallerFailureAndRunningAppProtection(t *testing.T) {
-	for _, scenario := range []string{"success", "signature failure", "running"} {
-		root := t.TempDir()
-		installed := false
-		p := InstallPlan{Tool: WorkBuddy, Release: Release{Version: "5.9.3", Artifact: Artifact{URL: "https://download.codebuddy.cn/WorkBuddy.exe", Signature: "Tencent WorkBuddy"}}}
-		locatePlan(&p, filepath.Join(root, "所选 中文 space"), filepath.Join(root, "downloads"))
-		runner := &fakeRunner{paths: map[string]string{"powershell.exe": "powershell"}, capture: func(c Command) (string, error) {
-			if strings.Contains(strings.Join(c.Args, " "), "FileVersionInfo") {
-				return "5.9.3.0", nil
+	for _, test := range []struct {
+		name, cache, download string
+		wantFetches           int
+		wantInstall           bool
+	}{
+		{name: "fresh", download: "signed", wantFetches: 1, wantInstall: true},
+		{name: "valid cache", cache: "signed", wantInstall: true},
+		{name: "damaged cache", cache: "corrupt", download: "signed", wantFetches: 1, wantInstall: true},
+		{name: "retry signature failure", cache: "corrupt", download: "also invalid", wantFetches: 1},
+		{name: "retry download failure", cache: "corrupt", wantFetches: 1},
+		{name: "running", download: "signed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			installed := false
+			p := InstallPlan{Tool: WorkBuddy, Release: Release{Version: "5.9.3", Artifact: Artifact{URL: "https://download.codebuddy.cn/WorkBuddy.exe", Signature: "Tencent WorkBuddy"}}}
+			locatePlan(&p, filepath.Join(root, "所选 中文 space"), filepath.Join(root, "downloads"))
+			file := filepath.Join(p.DownloadDir, "WorkBuddy.exe")
+			if test.cache != "" {
+				if err := os.MkdirAll(p.DownloadDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, []byte(test.cache), 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if scenario == "running" {
-				return "1", nil
-			}
-			return "0", nil
-		}, run: func(c Command) error {
-			args := strings.Join(c.Args, " ")
-			if strings.Contains(args, "verify-signature.ps1") && scenario == "signature failure" {
-				return errors.New("publisher mismatch")
-			}
-			if strings.Contains(args, "install-workbuddy.ps1") {
+			runner := &fakeRunner{paths: map[string]string{"powershell.exe": "powershell"}, capture: func(c Command) (string, error) {
+				if strings.Contains(strings.Join(c.Args, " "), "FileVersionInfo") {
+					return "5.9.3.0", nil
+				}
+				if test.name == "running" {
+					return "1", nil
+				}
+				return "0", nil
+			}, run: func(c Command) error {
+				script := filepath.Base(c.Args[4])
+				asset := c.Args[6]
+				data, err := os.ReadFile(asset)
+				if script == "verify-signature.ps1" {
+					if filepath.Ext(asset) != ".exe" || string(data) != "signed" {
+						return errors.New("publisher mismatch")
+					}
+					return err
+				}
+				if script != "install-workbuddy.ps1" || !samePath(asset, file) || err != nil || string(data) != "signed" {
+					t.Fatalf("attempted to run an unverified installer: %v (%v)", c, err)
+				}
 				installed = true
-				os.MkdirAll(p.InstallDir, 0755)
+				if err := os.MkdirAll(p.InstallDir, 0755); err != nil {
+					return err
+				}
 				return os.WriteFile(filepath.Join(p.InstallDir, "WorkBuddy.exe"), []byte("fixture"), 0600)
+			}}
+			a := testApp(t, "", runner)
+			a.Host = Host{OS: "windows", Arch: "amd64"}
+			assets := map[string][]byte{}
+			if test.download != "" {
+				assets["/WorkBuddy.exe"] = []byte(test.download)
 			}
-			return nil
-		}}
-		a := testApp(t, "", runner)
-		a.Host = Host{OS: "windows", Arch: "amd64"}
-		a.Client = fixtureClient(map[string][]byte{"/WorkBuddy.exe": []byte("installer")})
-		result := a.executePlan(context.Background(), p)
-		if scenario == "success" {
-			if !installed || result.Status != "成功" {
-				t.Fatal(result)
+			a.Client = fixtureClient(assets)
+			transport, fetches := a.Client.HTTP.Transport, 0
+			a.Client.HTTP.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				fetches++
+				return transport.RoundTrip(r)
+			})
+			result := a.executePlan(context.Background(), p)
+			if fetches != test.wantFetches || installed != test.wantInstall || (result.Status == "成功") != test.wantInstall {
+				t.Fatal(fetches, installed, result)
 			}
-		} else {
-			if installed || result.Status == "成功" || len(a.State.Records) != 0 {
-				t.Fatal("unverified installer or running app was modified", result)
+			if test.wantInstall {
+				if b, err := os.ReadFile(file); err != nil || string(b) != "signed" {
+					t.Fatalf("verified asset not cached: %q %v", b, err)
+				}
+			} else if test.cache != "" {
+				if b, err := os.ReadFile(file); err != nil || string(b) != test.cache || len(a.State.Records) != 0 {
+					t.Fatalf("failed update changed the old cache or installation record: %q %v", b, err)
+				}
+				if candidates, _ := filepath.Glob(filepath.Join(p.DownloadDir, ".oxgen-download-*")); len(candidates) != 0 {
+					t.Fatal("temporary downloads left behind", candidates)
+				}
 			}
-		}
+		})
 	}
 }
 
@@ -406,7 +454,7 @@ func TestLiveOfficialAgents(t *testing.T) {
 			if err = ensureWritable(p.DownloadDir); err != nil {
 				t.Fatal(err)
 			}
-			record, err := a.install(ctx, p, os.Stdout)
+			record, err := a.install(ctx, p, os.Stdout, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
